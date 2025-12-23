@@ -24,7 +24,7 @@ src/
 │   ├── HandIndicator.tsx          # Indicatore stato mani
 │   ├── PerformanceMonitor.tsx     # Monitor FPS
 │   ├── HandFeedbackRings.tsx      # Feedback visivo mani
-│   └── ParticleSystem.tsx         # Sistema particelle (non recuperato)
+│   └── ParticleSystem.tsx         # Sistema particelle
 ├── hooks/
 │   └── useHandTracking.ts         # Hook per riconoscimento mani
 └── utils/
