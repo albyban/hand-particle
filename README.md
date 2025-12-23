@@ -247,6 +247,295 @@ MediaPipe Video → useHandTracking Hook
 3. **Caching geometrie**: Riusare geometrie uguali tra template
 4. **Debouncing**: Input da slider potrebbe essere debounced
 
+## 🖐️ Gestione dei Gesti - Approfondimento
+
+### Architettura Gestuale
+
+Il sistema di riconoscimento gesti è modulare e basato su **MediaPipe Landmarks** (21 punti di riferimento per mano):
+
+```
+Landmark indices per mano:
+0   = Wrist (polso)
+1-4 = Thumb (pollice)
+5-8 = Index (indice)
+9-12 = Middle (medio)
+13-16 = Ring (anulare)
+17-20 = Pinky (mignolo)
+```
+
+### 1. Pizzico (Pinch) - Implementato e Attivo
+
+**Trigger Condition:**
+```typescript
+distance(thumbTip, indexTip) < 0.05
+```
+
+Misura la distanza Euclidea 3D tra:
+- Landmark 4 (punta pollice)
+- Landmark 8 (punta indice)
+
+**Soglia**: 0.05 unità nello spazio 3D normalizzato di MediaPipe
+
+**Effetto nel Progetto:**
+1. Cambia il colore delle particelle al successivo nella lista
+2. Visivamente nel `HandFeedbackRings`:
+   - Colore anello diventa verde brillante (#00ffaa)
+   - Scale aumenta con pulsazione (1.2-1.4x)
+   - Opacità aumenta di 0.4
+3. Cicla infinitamente attraverso i 9 colori preset
+
+**Flusso di Attivazione:**
+```
+useHandTracking Hook
+  ↓
+detectPinch(leftHand.landmarks) → isPinching: boolean
+  ↓
+ThreeScene.tsx monitora leftHand.isPinching
+  ↓
+detecta transizione false→true
+  ↓
+onColorChange(nextColor)
+  ↓
+ParticleSystem.setColor(newColor)
+```
+
+**State Management Pizzico:**
+```typescript
+// In ThreeScene.tsx
+const lastPinchStateRef = useRef(false);
+
+useEffect(() => {
+  if (leftHand.isPinching && !lastPinchStateRef.current) {
+    // Transizione: not pinching → pinching
+    const nextIndex = (currentColorIndex + 1) % colorPresets.length;
+    setCurrentColorIndex(nextIndex);
+    onColorChange(colorPresets[nextIndex].color);
+  }
+  lastPinchStateRef.current = leftHand.isPinching;
+}, [handData, currentColorIndex, onColorChange]);
+```
+
+**Perché questa implementazione è robusta:**
+- Triggered su **edge detection** (transizione di stato), non su stato continuo
+- Previene spam di cambi colore (solo al passaggio da non-pizzico a pizzico)
+- Mantiene stato con `useRef` per confronto frame-to-frame
+
+### 2. Thumbs Up (Implementato ma Non Utilizzato)
+
+**Trigger Condition:**
+```typescript
+thumbTip.y < thumbIP.y                          // Pollice verso l'alto
+&& indexTip.y > indexMCP.y                      // Indice verso il basso
+&& middleTip.y > middleMCP.y                    // Medio verso il basso
+&& ringTip.y > ringMCP.y                        // Anulare verso il basso
+&& pinkyTip.y > pinkyMCP.y                      // Mignolo verso il basso
+```
+
+**Validazione:**
+- Landmark 4 (thumbTip) più alto di Landmark 3 (thumbIP)
+- Landmark 8 più basso di Landmark 5 (indexMCP)
+- Landmark 12 più basso di Landmark 9 (middleMCP)
+- Landmark 16 più basso di Landmark 13 (ringMCP)
+- Landmark 20 più basso di Landmark 17 (pinkyMCP)
+
+**Note:**
+- Attualmente dichiarato in `gestureDetection.ts` ma non usato
+- Potrebbe essere esteso per: reset colore, toggle effetti, etc.
+- Richiede coordinazione: tutte le dita giù + pollice su
+
+### 3. Peace Sign / V-Sign (Implementato ma Non Utilizzato)
+
+**Trigger Condition:**
+```typescript
+indexTip.y < indexMCP.y                         // Indice su
+&& middleTip.y < middleMCP.y                    // Medio su
+&& ringTip.y > ringMCP.y                        // Anulare giù
+&& pinkyTip.y > pinkyMCP.y                      // Mignolo giù
+```
+
+**Validazione:**
+- Solo indice e medio alzati
+- Anulare e mignolo abbassati
+
+**Note:**
+- Non integrato nell'UI attualmente
+- Potrebbe controllare: toggle bloom, reset zoom, menu di selezione
+
+### Architettura di Feedback Visivo
+
+#### HandFeedbackRings - Anelli 3D (PRESENTE MA NON VISIBILE - BUG)
+
+**⚠️ Nota Importante**: Questo componente è nel codice ma **non produce feedback visibile**. Ecco perché:
+
+Il componente crea sfere 3D posizionate nello spazio della scena, ma a causa di un **errore di posizionamento Z**, le sfere finiscono fuori dal frustum della camera (dietro di essa).
+
+**Sfera Sinistra (Left Hand Ring):**
+```
+Geometria:  SphereGeometry(0.03 radius, 16x16 segments)
+Colore base: #4a9eff (azzurro chiaro)
+Blending:   ADDITIVO (si somma con bloom)
+
+Comportamento:
+- Posizione: Segue wrist position della mano sinistra
+- Opacità base: 0.3 + sin(time) * 0.15 (pulsazione morbida 0.15-0.45)
+
+Se isPinching:
+  - Colore → #00ffaa (verde brillante)
+  - Scale → 1.2 + sin(time*3) * 0.2 (pulsazione rapida 1.0-1.4x)
+  - Opacità → +0.4 aggiuntiva (totale 0.55-0.85)
+
+Altrimenti:
+  - Colore = #4a9eff
+  - Scale = 1.0x (normale)
+  - Opacità = 0.15-0.45
+```
+
+**Sfera Destra (Right Hand Ring):**
+```
+Geometria:  SphereGeometry(0.03 radius, 16x16 segments)
+Colore base: #4a9eff (azzurro chiaro)
+Blending:   ADDITIVO
+
+Comportamento:
+- Posizione: Segue wrist position della mano destra
+- Opacità base: 0.3 + sin(time) * 0.15 (pulsazione morbida)
+
+Sempre presente quando rilevata:
+  - Scale: 0.4 + openness * 0.5
+    → 0.4x (mano chiusa) a 0.9x (mano aperta)
+  - Colore: Lerp tra #4a9eff e #ff4a9e
+    → Azzurro (mano chiusa) a Rosa (mano aperta)
+    
+Questo crea una "mappa visiva" di apertura/chiusura della mano
+```
+
+**Asse Z Offset:**
+```
+leftRing.position.z = leftHand.position.z - 2
+rightRing.position.z = rightHand.position.z - 2
+
+Sposta gli anelli 2 unità dietro la posizione tracciata
+Questo crea parallasse e evita che blocchino la visione
+```
+
+#### HandIndicator - Status Bar HTML
+
+Componente React che mostra:
+
+```
+┌─────────────────────────────┐
+│  Hand Detection             │
+├─────────────────────────────┤
+│ 🖐️ Left Hand     45%         │
+│ [═══════════════       ]    │
+│                             │
+│ 🖐️ Right Hand    72%        │
+│ [█████████████████     ]   │
+├─────────────────────────────┤
+│ Move hands closer/further   │
+│ to scale particles...       │
+└─────────────────────────────┘
+```
+
+**Update dinamico:**
+- **Colore icona**: Verde (#10b981) se rilevata, grigio se no
+- **Percentuale**: `round(hand.openness * 100)`
+- **Barra progresso**: Verde se rilevata, grigio se no
+- **Update frequenza**: Ogni render (60fps)
+
+### Flusso Dati Complet per Gesti
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    VIDEO STREAM                         │
+│              (Browser webcam)                           │
+└────────────────────┬────────────────────────────────────┘
+                     │
+                     ↓
+        ┌────────────────────────────┐
+        │   MediaPipe Hands Model    │
+        │  (Caricato da CDN)         │
+        └────────┬───────────────────┘
+                 │
+                 ↓
+    ┌─────────────────────────────────┐
+    │ 21 Landmarks per Mano (x,y,z)   │
+    └────────┬────────────────────────┘
+             │
+             ↓
+    ┌─────────────────────────────────────┐
+    │ useHandTracking Hook                │
+    │ Calcola:                            │
+    │ - openness (distance-based)         │
+    │ - position (wrist 3D)               │
+    │ - rotation (vectors tra landmark)   │
+    │ - isPinching (detectPinch)          │
+    └────────┬────────────────────────────┘
+             │
+      ┌──────┴──────┬─────────────────┐
+      ↓             ↓                 ↓
+   ThreeScene  HandIndicator   HandFeedbackRings
+   - Scale        (React UI)      (3D Spheres)
+   - Rotate         HTML           Visual Cues
+   - Color        Text +
+                 Progress Bars
+```
+
+### Possibilità di Estensione
+
+**Gesti Dichiarati ma Non Usati:**
+
+1. **Thumbs Up**: Potrebbe
+   - Resettare colore a default
+   - Toggle ALL effetti (bloom, pulsate)
+   - Salvare preset corrente
+   - Pausa/Resume animazione
+
+2. **Peace Sign**: Potrebbe
+   - Aprire menu di selezione template
+   - Flip tra mano sinistra/destra di controllo
+   - Toggle FPS monitor
+   - Resettare view camera
+
+**Nuovi Gesti Possibili:**
+- **OK Sign**: Cerchio pollice+indice → Toggle Fullscreen
+- **Wave**: Movimento lineare rapido mano → Snapshot
+- **Fist**: Tutte dita chiuse → Modalità sleep (rallenta rendering)
+- **Spread Hand**: Dita divaricate → Zoom camera
+
+### Latenza e Responsività
+
+**Fattori che influenzano lag:**
+
+1. **MediaPipe Processing**: ~30-50ms per frame
+2. **Gesture Detection**: Istantanea (distanza 3D)
+3. **React Re-render**: Dipende da complessità
+4. **Three.js Update**: Parallelo a React
+5. **GPU Sync**: Attesa needsUpdate flag
+
+**Miglioramenti Possibili:**
+- Implementare debounce per gesti persistenti
+- Aggiungere smoothing con moving average
+- Usare Web Workers per gesture detection
+- Implementare confidence thresholds da MediaPipe
+
+### Sicurezza e Privacy
+
+**Considerazioni:**
+- Video non è mai mandato a server esterno
+- MediaPipe gira completamente nel browser
+- Solo landmarks (21 punti) sono processati, mai pixels
+- Nessun storage di dati gesturali
+
+---
+
+**Summary Gesti**:
+- ✅ Pizzico: Completamente funzionale, integrato
+- ⏳ Thumbs Up: Dichiarato, non usato
+- ⏳ Peace Sign: Dichiarato, non usato
+- 🎨 Feedback: Anelli 3D dinamici + Status bar HTML
+- 🚀 Estendibile: Architettura permette facile aggiunta di nuovi gesti
+
 ## 📦 Dipendenze Critiche
 
 - **MediaPipe**: Caricato da CDN, fallback graceful se non disponibile
@@ -351,4 +640,82 @@ Nel costruttore:
       → Particelle si muovono mentre vengono scalate
 
    c) Rotazione:
-      pos = rotationMatrix.appl
+      pos = rotationMatrix.apply(pos)
+      → Ruota tutte le particelle insieme
+
+   d) Glow Animazione:
+      glow = (sin(time * glowSpeed + glowPhase) + 1) * 0.5
+      intensity = 0.2 + glow * 0.8
+      → Ogni particella varia da 0.2 a 1.0 indipendentemente
+
+5. Update GPU Attributes
+   positionAttribute.needsUpdate = true
+   colorAttribute.needsUpdate = true
+   → Comunica al GPU che i dati sono cambiati
+```
+
+### Performance Insights
+
+**Punti Critici:**
+1. Loop ogni frame con `particleCount` iterazioni (fino a 25,000)
+2. Operazioni trigonometriche costose: `sin()` per ogni particella
+3. Matrix transform per ogni particella
+4. GPU upload ogni frame
+
+**Ottimizzazioni Implementate:**
+- Uso di Float32Array (typed array) invece di Array
+- Riuso buffer geometry (evita allocazione)
+- Vertex colors instead of multiple materials
+- Additive blending (meno overdraw)
+- depthWrite:false (meno work GPU)
+
+**Possibili Bottleneck:**
+- Calcolo Math.sin() 3x per particella per rumore
+- Calcolo Math.sin() 1x per particella per glow
+- Totale: ~4 sin() per particella per frame
+- A 60fps e 25k particelle = 6 milioni di sin() al secondo
+
+### Meccanica del Movimento
+
+1. **Base Movement**: Particelle mantengono forma ma vibrano leggermente
+2. **Scale**: Tutta la forma cresce/shrink mantenendo forma
+3. **Rotation**: Intero oggetto ruota come blocco
+4. **Glow**: Indipendente da forma - ogni particella ha suo "brightness"
+
+**Esempio flusso:**
+```
+Template sfera
+    ↓ (ogni frame)
+Ogni particella si sposta di ±0.02 casualmente
+    ↓
+Scala di 1.5x (utente apre mano)
+    ↓
+Ruota di 45° (utente ruota polso)
+    ↓
+Brightness oscilla da 0.2 a 1.0
+    ↓
+Render come Points (veloce)
+```
+
+### Qualità Visiva
+
+**Effetti Realizzati:**
+- Bloom post-processing (dall'esterno) + Vertex colors (dall'interno) = effetto luminoso doppio
+- Texture soft + additive blending = particelle "brillano" insieme
+- Glow animato indipendente = movimento vitale anche con scala/rotazione zero
+- Rumore procedurale = movimento organico (non meccanico)
+
+**Texture Radiale:**
+Questo è il "segreto" dell'effetto visivo piacevole:
+```
+Canvas 32x32:
+  radialGradient(16,16,0 a 16,16,16)
+  0% = bianco opaco
+  50% = bianco 50%
+  100% = trasparente
+```
+Quando molte particelle si sovrappongono con blending additivo, creano un "bagliore" soft.
+
+---
+
+**Nota Finale**: L'implementazione è ottimizzata per visual appeal piuttosto che massima performance. Il numero limitato di particelle (max 25k) è una scelta consapevole per mantenere fluidità a 60fps su hardware vario.
