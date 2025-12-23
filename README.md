@@ -24,7 +24,7 @@ src/
 │   ├── HandIndicator.tsx          # Indicatore stato mani
 │   ├── PerformanceMonitor.tsx     # Monitor FPS
 │   ├── HandFeedbackRings.tsx      # Feedback visivo mani
-│   └── ParticleSystem.tsx         # Sistema particelle
+│   └── ParticleSystem.tsx         # Sistema particelle (non recuperato)
 ├── hooks/
 │   └── useHandTracking.ts         # Hook per riconoscimento mani
 └── utils/
@@ -262,6 +262,93 @@ MediaPipe Video → useHandTracking Hook
 - ESLint per code quality
 - Tailwind CSS per styling
 
----
+## 🎯 ParticleSystem.ts - Il Cuore del Sistema
 
-**Nota**: Non è stato possibile accedere al file `ParticleSystem.tsx` per analizzare i dettagli dell'implementazione del sistema particelle e dei suoi update mechanism in tempo reale.
+Questa è la classe core che gestisce il rendering e l'animazione delle particelle.
+
+### Struttura Dati Interna
+
+```typescript
+// Posizioni e geometria
+private basePositions: Float32Array          // Template originale
+private currentPositions: Float32Array       // Posizioni trasformate in tempo reale
+
+// Scala e rotazione (smooth interpolation)
+private targetScale: number = 1
+private currentScale: number = 1
+private targetRotation: THREE.Euler
+private currentRotation: THREE.Euler
+
+// Animazione procedurale
+private randomOffsets: Float32Array          // Offset random per noise
+private randomSpeeds: Float32Array           // Velocità random per noise
+private glowPhases: Float32Array             // Fase del glow per particella
+private glowSpeeds: Float32Array             // Velocità del glow per particella
+
+// Proprietà visive
+private pulsateIntensity: number             // 0-1, intensità pulsazione
+private autoRotateSpeed: number              // Velocità rotazione automatica
+private colors: Float32Array                 // Colore per particella (RGB)
+```
+
+### Inizializzazione
+
+Nel costruttore:
+
+1. **Generazione Rumore Procedurale**: Per ogni particella crea
+   - 3 offset random (per x, y, z) nel range [0, 2π]
+   - 3 speed random (per x, y, z) nel range [0.5, 2.0]
+   - Questi variano il movimento di ogni particella indipendentemente
+
+2. **Glow Animazione**: Per ogni particella
+   - Phase casuale in [0, 2π]
+   - Speed casuale in [0.8, 2.6]
+   - Crea effetto di "brillare" ondulante unico per ogni particella
+
+3. **Texture Particella**: Canvas gradient radiale
+   - Centro: bianco opaco (1.0)
+   - Centro-bordo: bianco semi-trasparente (0.5)
+   - Bordo: trasparente (0)
+   - Crea effetto "glow" soft per ogni particella
+
+4. **Materiale Three.js**
+   ```
+   - PointsMaterial con blending ADDITIVO (particelle si sommano)
+   - Transparent + depthWrite:false (compositing corretto)
+   - Vertex colors abilitati (per il glow animato)
+   - Size attenuation (più piccole in lontananza)
+   - Usa texture per forma soft
+   ```
+
+### Loop Update (Eseguito ogni frame)
+
+```
+1. Smooth Scale Interpolation
+   currentScale += (targetScale - currentScale) * 0.1
+   → Transizioni fluide della scala
+
+2. Rotazione Smooth
+   Se autoRotate attivo:
+       currentRotation.y += autoRotateSpeed * 0.01
+   Altrimenti:
+       currentRotation += (targetRotation - currentRotation) * 0.1
+   → Interpolazione suave o rotazione fissa
+
+3. Pulsazione Dimensione
+   size = targetSize + (baseSize * 0.5) * sin(time * 0.003) * pulsateIntensity
+   → Effetto "respiro" controllato
+
+4. Per Ogni Particella (loop critico per performance):
+   
+   a) Generazione Rumore:
+      randomX = sin(time * speed[i] + offset[i]) * 0.02
+      randomY = sin(time * speed[i+1] + offset[i+1]) * 0.02
+      randomZ = sin(time * speed[i+2] + offset[i+2]) * 0.02
+      → Movimento organico ondulante
+
+   b) Scaling e Rumore:
+      pos = (basePos + random) * currentScale
+      → Particelle si muovono mentre vengono scalate
+
+   c) Rotazione:
+      pos = rotationMatrix.appl
