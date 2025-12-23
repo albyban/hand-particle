@@ -143,11 +143,16 @@ export const useHandTracking = () => {
         hands.setOptions({
           maxNumHands: 2,
           modelComplexity: 1,
-          minDetectionConfidence: 0.5,
-          minTrackingConfidence: 0.5
+          minDetectionConfidence: 0.3,
+          minTrackingConfidence: 0.3
         });
 
         hands.onResults((results: any) => {
+          console.log('Hand detection results:', {
+            hasFaces: !!results.multiHandLandmarks,
+            handsDetected: results.multiHandLandmarks?.length || 0
+          });
+
           const newLeftHand: HandState = {
             isOpen: false,
             openness: 0,
@@ -201,8 +206,13 @@ export const useHandTracking = () => {
 
         handsRef.current = hands;
 
+        let frameCount = 0;
         const camera = new window.Camera(videoElement, {
           onFrame: async () => {
+            frameCount++;
+            if (frameCount % 30 === 0) {
+              console.log('Camera frames processed:', frameCount);
+            }
             if (handsRef.current) {
               await handsRef.current.send({ image: videoElement });
             }
