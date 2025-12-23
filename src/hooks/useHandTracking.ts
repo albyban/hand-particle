@@ -141,10 +141,10 @@ export const useHandTracking = () => {
         });
 
         hands.setOptions({
-          maxNumHands: 2,
-          modelComplexity: 1,
-          minDetectionConfidence: 0.3,
-          minTrackingConfidence: 0.3
+          maxNumHands: 1,
+          modelComplexity: 0,
+          minDetectionConfidence: 0.2,
+          minTrackingConfidence: 0.2
         });
 
         hands.onResults((results: any) => {
@@ -217,8 +217,8 @@ export const useHandTracking = () => {
               await handsRef.current.send({ image: videoElement });
             }
           },
-          width: 640,
-          height: 480
+          width: 480,
+          height: 360
         });
 
         camera.start()
